@@ -814,6 +814,7 @@
             "https://str.cloudn-service.com/buildpacks/php/lucid/php/5.5.11/php-openssl-5.5.11.tar.gz", 
             "https://str.cloudn-service.com/buildpacks/php/lucid/php/5.5.11/php-openssl-5.5.11.tar.gz.sha1", 
             "https://str.cloudn-service.com/buildpacks/php/lucid/php/5.5.11/php-pdo_pgsql-5.5.11.tar.gz", 
+
             "https://str.cloudn-service.com/buildpacks/php/lucid/php/5.5.11/php-pdo_pgsql-5.5.11.tar.gz.sha1", 
             "https://str.cloudn-service.com/buildpacks/php/lucid/php/5.5.11/php-pear-5.5.11.tar.gz", 
             "https://str.cloudn-service.com/buildpacks/php/lucid/php/5.5.11/php-pear-5.5.11.tar.gz.sha1", 
