@@ -1,6 +1,6 @@
 ## Binaries
 
-To reduce the time it takes for the build pack to run and setup a usable environment, the build pack makes use of precompiled binaries.  For general use, these binaries are hosted on DropBox.  If you're running on a public cloud like Pivotal Web Services, you should be able to use these binaries without any problems and you probably do not need to read any further.  If you are running in a private environment or if for security reasons, you'd like to compile your own binaries, this document will explain what you need to do.
+To reduce the time it takes for the build pack to run and setup a usable environment, the build pack makes use of precompiled binaries.  For general use, these binaries are hosted on S3.  If you're running on a public cloud like Pivotal Web Services, you should be able to use these binaries without any problems and you probably do not need to read any further.  If you are running in a private environment or if for security reasons, you'd like to compile your own binaries, this document will explain what you need to do.
 
 ### Binary Repo Structure
 
@@ -24,7 +24,7 @@ The `DOWNLOAD_URL` would be `http://server/cf/php-repo`.
 
 ### Building Your Own Repository
 
-The easiest way to build your own repository is to run the `bin/binaries download` command.  This is a script that is included with the build pack and when run it will read the file `binaries/index-latest.json` and download the latest set of binaries from DropBox.  When it completes, you'll have a working set of binaries on your local machine.  
+The easiest way to build your own repository is to run the `bin/binaries download` command.  This is a script that is included with the build pack and when run it will read the file `binaries/index-latest.json` and download the latest set of binaries from S3.  When it completes, you'll have a working set of binaries on your local machine.  
 
 To use the downloaded files with the build pack, you just need to copy them to your web server and set the `DOWNLOAD_URL` to point to your web server.  Setting `DOWNLOAD_URL` can be done per application, in `.bp-config/options.json`, or by forking the build pack and modifying `defaults/options.json`.
 
@@ -78,5 +78,66 @@ Here are the steps you would need to do this.
 1. Run `bin/binaries zip --index binaries/index-latest.json`.  This will download the latest set of binaries and packagae it with the build pack that you have checked out.
 1. Run `cf create-buildpack` pointing to the file that was generated in the previous step.  This will install the build pack on your private cloud (as long as you have permissions).
 1. Now you can `cf push` a PHP application and you no longer need to set the `-b` argument or specify the build pack in your manifest file.
+
+#### Use a Build Pack Bundle
+
+If you're running your own CF installation, like with PCF or Bosh Lite, you can follow these steps to install a bundled version of this build pack.
+
+First, check if there is an existing `php_buildpack` already installed.
+
+```
+$ cf buildpacks
+Getting buildpacks...
+
+buildpack          position   enabled   locked   filename
+java_buildpack     1          true      false    java-buildpack-v2.4.zip
+ruby_buildpack     2          true      false    ruby_buildpack-offline-v1.1.0.zip
+nodejs_buildpack   3          true      false    nodejs_buildpack-offline-v1.0.1.zip
+go_buildpack       4          true      false    go_buildpack-offline-v1.0.1.zip
+python_buildpack   5          true      false    python_buildpack-offline-v1.0.1.zip
+php_buildpack      6          true      false    php_buildpack-offline-v1.0.1.zip
+```
+
+If so, disable it.
+
+```
+$ cf update-buildpack php_buildpack --disable
+$ cf buildpacks
+Getting buildpacks...
+
+buildpack          position   enabled   locked   filename
+java_buildpack     1          true      false    java-buildpack-v2.4.zip
+ruby_buildpack     2          true      false    ruby_buildpack-offline-v1.1.0.zip
+nodejs_buildpack   3          true      false    nodejs_buildpack-offline-v1.0.1.zip
+go_buildpack       4          true      false    go_buildpack-offline-v1.0.1.zip
+python_buildpack   5          true      false    python_buildpack-offline-v1.0.1.zip
+php_buildpack      6          false     false    php_buildpack-offline-v1.0.1.zip
+```
+
+Upload your bundled version of this build pack.
+
+```
+$ cf create-buildpack dm_php_buildpack php-build-pack-14.09.10-16.17.43.zip 7 --enable
+$ cf buildpacks
+Getting buildpacks...
+
+buildpack            position   enabled   locked   filename
+java_buildpack       1          true      false    java-buildpack-v2.4.zip
+ruby_buildpack       2          true      false    ruby_buildpack-offline-v1.1.0.zip
+nodejs_buildpack     3          true      false    nodejs_buildpack-offline-v1.0.1.zip
+go_buildpack         4          true      false    go_buildpack-offline-v1.0.1.zip
+python_buildpack     5          true      false    python_buildpack-offline-v1.0.1.zip
+php_buildpack        6          false     false    php_buildpack-offline-v1.0.1.zip
+dm_php_buildpack     7          true      false    php-build-pack-14.09.10-16.17.43.zip
+```
+
+Now to push an app using the build pack you installed.
+
+  - don't set the `-b` argument to cf push
+  - remove `buildpack` from manifest.yml, if it exists
+  - cf push
+
+Alternatively, push and use the `-b` argument with the name of the build pack.  From the example above, that's `dm_php_buildpack`.
+
 
 [PyEnv]:https://github.com/yyuu/pyenv

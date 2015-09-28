@@ -16,6 +16,7 @@
 # limitations under the License.
 import sys
 import os
+import re
 import json
 import urllib2
 import argparse
@@ -29,6 +30,10 @@ from datetime import datetime
 
 
 BPDIR = os.path.dirname(os.path.dirname(os.path.abspath(sys.argv[0])))
+VERSION_FMTS = (
+    re.compile(r'^(\d+)\.(\d+)\.(\d+)$'),
+    re.compile(r'^(\d+)\.(\d+)\.(\d+)-(.+)$')
+)
 
 sys.path.append(os.path.join(BPDIR, 'lib'))
 
@@ -93,6 +98,9 @@ def run():
                                           ' and build a local repository.')
     download.add_argument('binary_path',
                           help='Where to put the binaries')
+    download.add_argument('--cache',
+                       action='store_true',
+                       help='Any files downloaded will be stored in cache for subsequent builds.')
     download.add_argument('--index',
                           help='Override the location for the download index. '
                                'Defaults to <binary-path>/index-latest.json.')
@@ -101,7 +109,7 @@ def run():
         if args['index'] is None:
             args['index'] = os.path.join(args['binary_path'],
                                          'index-latest.json')
-        download_files(args['binary_path'], args['index'])
+        download_files(args['binary_path'], args['index'], args['cache'])
 
     download.set_defaults(func=wrap_download_files)
 
@@ -118,6 +126,9 @@ def run():
                     help='Override the location for the download index. '
                          'Defaults to <binary-path>/index-latest.json.'
                          'Must specify this or --binary-path.')
+    zipup.add_argument('--cache',
+                       action='store_true',
+                       help='Any files downloaded will be stored in cache for subsequent builds.')
     zipup.add_argument('--zip-path',
                        help='Location of the zip file to create.  Defaults '
                             'to the current directory.')
@@ -126,11 +137,11 @@ def run():
         if args['binary_path'] is None:
             if args['index'] is not None:
                 args['binary_path'] = tempfile.mkdtemp(prefix='php-binaries-')
-                download_files(args['binary_path'], args['index'])
+                download_files(args['binary_path'], args['index'], args['cache'])
         if args['zip_path'] is None:
             args['zip_path'] = os.getcwd()
         try:
-            zip_up_files(args['binary_path'], args['zip_path'])
+            zip_up_files(args['binary_path'], args['zip_path'], args['index'])
         finally:
             if args['binary_path'].startswith(tempfile.gettempdir()):
                 print 'Cleaning up temp files at %s' % args['binary_path']
@@ -166,7 +177,7 @@ def generate_build_list(binPath, urlBase, index, allPkgs):
                                                                     urlBase,
                                                                     package,
                                                                     version)
-    json.dump(bins, index, indent=4)
+    json.dump(bins, index, indent=4, separators=(',',': '))
 
 
 def generate_build_for_version(binPath, urlBase, package, version):
@@ -186,6 +197,18 @@ def get_major_versions(pkgDir):
     return list(set(majVersions))
 
 
+def split_version(version):
+    def try_convert_to_int(val):
+        try:
+            return int(val)
+        except ValueError:
+            return val
+    for fmt in VERSION_FMTS:
+        m = fmt.match(version)
+        if m:
+            return map(try_convert_to_int, m.groups())
+
+
 def get_latest_version(pkgDir, like=None):
     """Get the latest version of a package.
 
@@ -198,11 +221,11 @@ def get_latest_version(pkgDir, like=None):
     for d in os.listdir(pkgDir):
         if os.path.isdir(os.path.join(pkgDir, d)):
             if like is None or d.startswith(like):
-                versions[d] = tuple(map(int, (d.split("."))))
+                versions[d] = split_version(d)
     return max(versions.iteritems(), key=operator.itemgetter(1))[0]
 
 
-def download_files(binPath, index):
+def download_files(binPath, index, cache=False):
     """Download the files listed in the JSON index file"""
     bins = json.load(open(index, 'rt'))
     safe_makedirs(binPath)
@@ -212,10 +235,10 @@ def download_files(binPath, index):
         for version in bins[package].keys():
             verPath = os.path.join(pkgPath, version)
             safe_makedirs(verPath)
-            download_version(verPath, bins[package][version])
+            download_version(verPath, bins[package][version], cache)
 
 
-def download_version(verPath, urls):
+def download_version(verPath, urls, cache):
     """Download all the files for a version of a packages.
 
     Downloads all of the files for a particular version of a package.  Each
@@ -230,13 +253,24 @@ def download_version(verPath, urls):
         while len([t for t in threads if t.is_alive()]) > 4:
             for thread in threads:
                 thread.join(0.25)
-        t = threading.Thread(target=download,
-                             args=(url, toPath))
+        t = threading.Thread(target=cached_download,
+                             args=(url, toPath, cache))
         t.start()
         threads.append(t)
     for thread in threads:
         thread.join()
 
+def cached_download(url, toPath, cache):
+    if cache:
+        cachedPath = os.path.expanduser('~/.buildpack-packager')
+        safe_makedirs(cachedPath)
+        cachedFilePath = os.path.join(cachedPath, os.path.basename(url))
+
+        if not os.path.exists(cachedFilePath):
+            download(url, cachedFilePath)
+        shutil.copy(cachedFilePath, toPath)
+    else:
+        download(url, toPath)
 
 def download(url, toPath):
     try:
@@ -282,13 +316,18 @@ def zip_up_folder(zf, path, compress=None, altBase=None):
                 zf.write(fullPath, zipPath)
 
 
-def zip_up_files(binPath, zipPath):
-    zipName = 'php-build-pack-%s.zip' % \
-        datetime.now().strftime('%y.%d.%m-%H.%M.%S')
+def zip_up_files(binPath, zipPath, indexPath):
+    with open('VERSION', 'r') as versionFile:
+        zipName = 'php_buildpack-offline-v%s.zip' % \
+            versionFile.read().rstrip()
     try:
         zf = zipfile.ZipFile(os.path.join(zipPath, zipName), 'w')
         # zip up binaries
         zip_up_folder(zf, binPath, altBase='binaries')
+        # zip up index
+        zf.write(indexPath, os.path.join('binaries', 'index-all.json'))
+        # zip uo VERSION
+        zf.write('VERSION')
         # zip up build pack
         zip_up_folder(zf, os.path.join(BPDIR, 'bin'),
                       zipfile.ZIP_DEFLATED)
@@ -303,11 +342,12 @@ def zip_up_files(binPath, zipPath):
         # overwrite DOWNLOAD_URL in options.json
         cfg = load_cfg()
         cfg['DOWNLOAD_URL'] = 'file://{BP_DIR}/binaries'
+        cfg['STACK'] = ''
         info = zipfile.ZipInfo('defaults/options.json')
         info.date_time = datetime.now().timetuple()[:6]
         info.compress_type = zipfile.ZIP_DEFLATED
         info.external_attr = 0644 << 16L
-        zf.writestr(info, json.dumps(cfg, indent=4))
+        zf.writestr(info, json.dumps(cfg, indent=4, separators=(',',': ')))
     finally:
         if zf:
             zf.close()

@@ -16,29 +16,42 @@
 # limitations under the License.
 from datetime import datetime
 from build_pack_utils import Builder
-from compile_helpers import setup_htdocs_if_it_doesnt_exist
+from compile_helpers import setup_webdir_if_it_doesnt_exist
+from compile_helpers import setup_log_dir
+from compile_helpers import log_bp_version
 
 
 if __name__ == '__main__':
     (Builder()
         .configure()
-            .default_config()
+            .default_config()  # noqa
             .user_config()
             .done()
         .execute()
-            .method(setup_htdocs_if_it_doesnt_exist)
-        .install()
-            .build_pack_utils()
+            .method(log_bp_version)
+        .execute()
+            .method(setup_webdir_if_it_doesnt_exist)
+        .execute()
+            .method(setup_log_dir)
+        .register()
             .extension()
                 .from_build_pack('lib/{WEB_SERVER}')
-                .done()
             .extension()
-                .from_build_pack('lib/{PHP_VM}')
-                .done()
+                .from_build_pack('lib/php')
+            .extension()
+                .from_build_pack('lib/hhvm')
+            .extension()
+                .from_build_pack('lib/env')
             .extensions()
                 .from_build_pack('extensions')
+            .extensions()
                 .from_application('.extensions')
-                .done()
+            .extension()
+                .from_build_pack('lib/additional_commands')
+            .done()
+        .install()
+            .build_pack_utils()
+            .extensions()
             .done()
         .copy()
             .under('{BP_DIR}/bin')

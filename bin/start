@@ -27,16 +27,12 @@ if __name__ == '__main__':
 
     logging.basicConfig(level=logging.DEBUG,
                         format='%(asctime)s [%(levelname)s] %(name)s - %(message)s',
-                        filename='../logs/proc-man.log')
+                        filename='logs/proc-man.log')
 
     home = os.environ['HOME']
     
     # Set the locations of data files
-    envFile = os.path.join(home, '.env')
     procFile = os.path.join(home, '.procs')
-
-    # Load the environment and update
-    os.environ.update(utils.load_env(envFile))
 
     # Load processes and setup the ProcessManager
     pm = process.ProcessManager()

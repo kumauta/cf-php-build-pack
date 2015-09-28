@@ -3,6 +3,8 @@ import sys
 import shutil
 import re
 import logging
+from collections import defaultdict
+from StringIO import StringIO
 from subprocess import Popen
 from subprocess import PIPE
 from cloudfoundry import CloudFoundryUtil
@@ -65,6 +67,7 @@ class Detecter(object):
         self._fullPath = False
         self._continue = False
         self._output = 'Found'
+        self._ctx = builder._ctx
         self._root = builder._ctx['BUILD_DIR']
 
     def _config(self, detecter):
@@ -73,22 +76,27 @@ class Detecter(object):
         return detecter
 
     def with_regex(self, regex):
+        regex = self._ctx.format(regex)
         self._detecter = self._config(RegexFileSearch(regex))
         return self
 
     def by_name(self, name):
+        name = self._ctx.format(name)
         self._detecter = self._config(TextFileSearch(name))
         return self
 
     def starts_with(self, text):
+        text = self._ctx.format(text)
         self._detecter = self._config(StartsWithFileSearch(text))
         return self
 
     def ends_with(self, text):
+        text = self._ctx.format(text)
         self._detecter = self._config(EndsWithFileSearch(text))
         return self
 
     def contains(self, text):
+        text = self._ctx.format(text)
         self._detecter = self._config(ContainsFileSearch(text))
         return self
 
@@ -105,7 +113,7 @@ class Detecter(object):
         return self
 
     def if_found_output(self, text):
-        self._output = text
+        self._output = self._ctx.format(text)
         return self
 
     def when_not_found_continue(self):
@@ -113,12 +121,12 @@ class Detecter(object):
         return self
 
     def under(self, root):
-        self._root = root
+        self._root = self._ctx.format(root)
         self.recursive()
         return self
 
     def at(self, root):
-        self._root = root
+        self._root = self._ctx.format(root)
         return self
 
     def done(self):
@@ -161,11 +169,17 @@ class Installer(object):
     def config(self):
         return ConfigInstaller(self)
 
-    def extension(self):
-        return ExtensionInstaller(self)
-
     def extensions(self):
-        return ExtensionInstaller(self)
+        ctx = self.builder._ctx
+        extn_reg = self.builder._extn_reg
+
+        def process(retcode):
+            if retcode != 0:
+                raise RuntimeError('Extension Failed with [%s]' % retcode)
+        for path in extn_reg._paths:
+            process_extension(path, ctx, 'compile', process, args=[self])
+        ctx['EXTENSIONS'].extend(extn_reg._paths)
+        return self
 
     def build_pack_utils(self):
         self._log.info("Installed build pack utils.")
@@ -180,6 +194,25 @@ class Installer(object):
 
     def done(self):
         return self.builder
+
+
+class Register(object):
+    def __init__(self, builder):
+        self._builder = builder
+        self._builder._extn_reg = ExtensionRegister(builder, self)
+
+    def extension(self):
+        return self._builder._extn_reg
+
+    def extensions(self):
+        return self._builder._extn_reg
+
+    def done(self):
+        def process(resp):
+            pass  # ignore result, don't care
+        for extn in self._builder._extn_reg._paths:
+            process_extension(extn, self._builder._ctx, 'configure', process)
+        return self._builder
 
 
 class ModuleInstaller(object):
@@ -265,21 +298,18 @@ class ModuleInstaller(object):
         return self._installer
 
 
-class ExtensionInstaller(object):
-    def __init__(self, installer):
-        self._installer = installer
-        self._ctx = installer.builder._ctx
+class ExtensionRegister(object):
+    def __init__(self, builder, reg):
+        self._builder = builder
+        self._ctx = builder._ctx
         self._paths = []
-        self._ignore = True
-        self._log = _log
+        self._reg = reg
 
     def from_build_pack(self, path):
-        self.from_path(os.path.join(self._ctx['BP_DIR'], path))
-        return self
+        return self.from_path(os.path.join(self._ctx['BP_DIR'], path))
 
     def from_application(self, path):
-        self.from_path(os.path.join(self._ctx['BUILD_DIR'], path))
-        return self
+        return self.from_path(os.path.join(self._ctx['BUILD_DIR'], path))
 
     def from_path(self, path):
         path = self._ctx.format(path)
@@ -289,21 +319,7 @@ class ExtensionInstaller(object):
             else:
                 for p in os.listdir(path):
                     self._paths.append(os.path.abspath(os.path.join(path, p)))
-        return self
-
-    def ignore_errors(self, ignore):
-        self._ignore = ignore
-        return self
-
-    def done(self):
-        def process(retcode):
-            if retcode != 0:
-                raise RuntimeError('Extension Failed with [%s]' % retcode)
-        for path in self._paths:
-            process_extension(path, self._ctx, 'compile', process,
-                              args=[self._installer])
-        self._ctx['EXTENSIONS'].extend(self._paths)
-        return self._installer
+        return self._reg
 
 
 class ConfigInstaller(object):
@@ -541,8 +557,8 @@ class FileUtil(object):
             self._from_path = self._builder._ctx[path]
         else:
             self._from_path = self._builder._ctx.format(path)
-            if not self._from_path.startswith('/'):
-                self._from_path = os.path.join(os.getcwd(), path)
+        if not self._from_path.startswith('/'):
+            self._from_path = os.path.join(os.getcwd(), self._from_path)
         return self
 
     def into(self, path):
@@ -550,8 +566,8 @@ class FileUtil(object):
             self._into_path = self._builder._ctx[path]
         else:
             self._into_path = self._builder._ctx.format(path)
-            if not self._into_path.startswith('/'):
-                self._into_path = os.path.join(self._from_path, path)
+        if not self._into_path.startswith('/'):
+            self._into_path = os.path.join(self._from_path, self._into_path)
         return self
 
     def _copy_or_move(self, src, dest):
@@ -742,7 +758,7 @@ class EnvironmentVariableBuilder(object):
 
     def from_context(self, name):
         builder = self._scriptBuilder.builder
-        if not name in builder._ctx.keys():
+        if name not in builder._ctx.keys():
             raise ValueError('[%s] is not in the context' % name)
         value = builder._ctx[name]
         value = value.replace(builder._ctx['BUILD_DIR'], '$HOME')
@@ -786,10 +802,13 @@ class BuildPackManager(object):
         self._bp._branch = branch
         return self
 
+    def using_stream(self, stream):
+        self._bp._stream = stream
+
     def done(self):
         if self._bp:
             self._bp._clone()
-            print self._bp._compile()
+            self._bp._compile()
         return self._builder
 
 
@@ -798,12 +817,34 @@ class SaveBuilder(object):
         self._builder = builder
 
     def runtime_environment(self):
+        # run service_environment on all extensions, pool the results
+        #  into one dict, duplicates are grouped in a list and kept
+        #  in the same order.
+        all_extns_env = defaultdict(list)
+
         def process(env):
-            envPath = os.path.join(self._builder._ctx['BUILD_DIR'], '.env')
-            with open(envPath, 'at') as envFile:
-                for key, val in env.iteritems():
-                    envFile.write("%s=%s\n" % (key, val))
+            for key, val in env.iteritems():
+                if hasattr(val, 'append'):
+                    all_extns_env[key].extend(val)
+                else:
+                    all_extns_env[key].append(val)
         process_extensions(self._builder._ctx, 'service_environment', process)
+        # Write pool of environment items to disk, a single item is
+        #  written in 'key=val' format, while lists are written as
+        #  'key=val:val:val' where ':' is os.pathsep.
+        profile_d_directory = os.path.join(self._builder._ctx['BUILD_DIR'], '.profile.d')
+        if not os.path.exists(profile_d_directory):
+            os.makedirs(profile_d_directory)
+        envPath = os.path.join(profile_d_directory, 'bp_env_vars.sh')
+        with open(envPath, 'at') as envFile:
+            for key, val in all_extns_env.iteritems():
+                if len(val) == 0:
+                    val = ''
+                elif len(val) == 1:
+                    val = val[0]
+                elif len(val) > 1:
+                    val = os.pathsep.join(val)
+                envFile.write("export %s=%s\n" % (key, val))
         return self
 
     def process_list(self):
@@ -819,6 +860,52 @@ class SaveBuilder(object):
         return self._builder
 
 
+class Shell(object):
+    EXIT_KEY = '##exit-code##-->'
+
+    def __init__(self, shell='/bin/bash', stream=sys.stdout):
+        self._proc = Popen(shell,
+                           stdin=PIPE,
+                           stdout=PIPE,
+                           stderr=PIPE,
+                           shell=False)
+        self._stream = stream
+
+    def __getattr__(self, name):
+        def cmd(*args):
+            cmd = '"%s" %s\necho "\n%s$?"\n' % (
+                name,
+                ' '.join([(arg == '|') and arg or '"%s"' %
+                          arg for arg in args]),
+                Shell.EXIT_KEY)
+            self._proc.stdin.write(cmd)
+            for c in iter(lambda: self._proc.stdout.readline(), ''):
+                if c.startswith(Shell.EXIT_KEY):
+                    return int(c[len(Shell.EXIT_KEY):])
+                self._stream.write(c)
+        return cmd
+
+    def __getitem__(self, key):
+        oldstream = self._stream
+        self._stream = StringIO()
+        try:
+            self.echo("$%s" % key)
+            return self._stream.getvalue().strip()
+        finally:
+            self._stream = oldstream
+
+    def __setitem__(self, key, value):
+        cmd = "%s=%s\n" % (key, value)
+        self._proc.stdin.write(cmd)
+
+    def __delitem__(self, key):
+        cmd = "unset %s" % key
+        self._proc.stdin.write(cmd)
+
+    def __contains__(self, key):
+        return self[key] != ''
+
+
 class Builder(object):
     def __init__(self):
         self._installer = None
@@ -830,6 +917,9 @@ class Builder(object):
 
     def install(self):
         return Installer(self)
+
+    def register(self):
+        return Register(self)
 
     def run(self):
         return Runner(self)
@@ -848,6 +938,9 @@ class Builder(object):
 
     def move(self):
         return FileUtil(self, move=True)
+
+    def shell(self, shell='/bin/bash'):
+        return Shell(self, shell=shell)
 
     def save(self):
         return SaveBuilder(self)

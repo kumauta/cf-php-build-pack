@@ -26,7 +26,7 @@ _log = logging.getLogger('newrelic')
 
 DEFAULTS = {
     'NEWRELIC_HOST': 'download.newrelic.com',
-    'NEWRELIC_VERSION': '4.8.0.47',
+    'NEWRELIC_VERSION': '4.15.0.74',
     'NEWRELIC_PACKAGE': 'newrelic-php5-{NEWRELIC_VERSION}-linux.tar.gz',
     'NEWRELIC_DOWNLOAD_URL': 'https://{NEWRELIC_HOST}/php_agent/'
                              'archive/{NEWRELIC_VERSION}/{NEWRELIC_PACKAGE}',
@@ -45,10 +45,11 @@ class NewRelicInstaller(object):
         self.license_key = None
         try:
             self._log.info("Initializing")
-            self._merge_defaults()
-            self._load_service_info()
-            self._load_php_info()
-            self._load_newrelic_info()
+            if ctx['PHP_VM'] == 'php':
+                self._merge_defaults()
+                self._load_service_info()
+                self._load_php_info()
+                self._load_newrelic_info()
         except Exception:
             self._log.exception("Error installing NewRelic! "
                                 "NewRelic will not be available.")
@@ -93,7 +94,7 @@ class NewRelicInstaller(object):
                                             'agent', self._php_arch,
                                             newrelic_so_name)
             self._log.debug("PHP Extension [%s]", self.newrelic_so)
-            self.log_path = os.path.join('@{HOME}', '..', 'logs',
+            self.log_path = os.path.join('@{HOME}', 'logs',
                                          'newrelic-daemon.log')
             self._log.debug("Log Path [%s]", self.log_path)
             self.daemon_path = os.path.join(

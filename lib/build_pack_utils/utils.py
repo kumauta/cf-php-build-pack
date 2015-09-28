@@ -1,8 +1,12 @@
 import os
+import sys
 import shutil
-import imp
 import logging
+import codecs
+import inspect
+import re
 from string import Template
+from runner import check_output
 
 
 _log = logging.getLogger('utils')
@@ -41,8 +45,17 @@ def load_processes(path):
 
 def load_extension(path):
     _log.debug("Loading extension from [%s]", path)
-    info = imp.find_module('extension', [path])
-    return imp.load_module('extension', *info)
+    init = os.path.join(path, '__init__.py')
+    if not os.path.exists(init):
+        with open(init, 'w'):
+            pass  # just create an empty file
+    try:
+        sys.path.append(os.path.dirname(path))
+        extn = __import__('%s.extension' % os.path.basename(path),
+                          fromlist=['extension'])
+    finally:
+        sys.path.remove(os.path.dirname(path))
+    return extn
 
 
 def process_extension(path, ctx, to_call, success, args=None, ignore=False):
@@ -66,9 +79,9 @@ def process_extensions(ctx, to_call, success, args=None, ignore=False):
 
 
 def rewrite_with_template(template, cfgPath, ctx):
-    with open(cfgPath) as fin:
+    with codecs.open(cfgPath, encoding='utf-8') as fin:
         data = fin.read()
-    with open(cfgPath, 'wt') as out:
+    with codecs.open(cfgPath, encoding='utf-8', mode='wt') as out:
         out.write(template(data).safe_substitute(ctx))
 
 
@@ -85,6 +98,20 @@ def rewrite_cfgs(toPath, ctx, delim='#'):
     else:
         _log.info("Rewriting configuration file [%s]", toPath)
         rewrite_with_template(RewriteTemplate, toPath, ctx)
+
+
+def find_git_url(bp_dir):
+    if os.path.exists(os.path.join(bp_dir, '.git')):
+        try:
+            url = check_output(['git', '--git-dir=%s/.git' % bp_dir,
+                                'config', '--get', 'remote.origin.url'])
+            commit = check_output(['git', '--git-dir=%s/.git' % bp_dir,
+                                   'rev-parse', '--short', 'HEAD'])
+            if url and commit:
+                return "%s#%s" % (url.strip(), commit.strip())
+        except OSError:
+            _log.debug("Git does not seem to be installed / available",
+                       exc_info=True)
 
 
 class FormattedDictWrapper(object):
@@ -124,10 +151,86 @@ class FormattedDict(dict):
         else:
             return dict.get(self, *args)
 
+    def __setitem__(self, key, val):
+        if _log.isEnabledFor(logging.DEBUG):
+            frame = inspect.currentframe()
+            caller = inspect.getouterframes(frame, 2)
+            info = caller[1]
+            _log.debug('line #%s in %s, "%s" is setting [%s] = [%s]',
+                       info[2], info[1], info[3], key, val)
+        dict.__setitem__(self, key, val)
+
+
+class ConfigFileEditor(object):
+    def __init__(self, cfgPath):
+        with open(cfgPath, 'rt') as cfg:
+            self._lines = cfg.readlines()
+
+    def find_lines_matching(self, regex):
+        if hasattr(regex, 'strip'):
+            regex = re.compile(regex)
+        if not hasattr(regex, 'match'):
+            raise ValueError("must be str or RegexObject")
+        return [line.strip() for line in self._lines if regex.match(line)]
+
+    def update_lines(self, regex, repl):
+        if hasattr(regex, 'strip'):
+            regex = re.compile(regex)
+        if not hasattr(regex, 'match'):
+            raise ValueError("must be str or RegexObject")
+        self._lines = [regex.sub(repl, line) for line in self._lines]
+
+    def append_lines(self, lines):
+        self._lines.extend(lines)
+
+    def insert_after(self, regex, lines):
+        if hasattr(regex, 'strip'):
+            regex = re.compile(regex)
+        if not hasattr(regex, 'match'):
+            raise ValueError("must be str or RegexObject")
+        for i, line in enumerate(self._lines):
+            if regex.match(line):
+                for j, item in enumerate(["%s\n" % l for l in lines]):
+                    self._lines.insert((i + j + 1), item)
+                break
+
+    def save(self, cfgPath):
+        with open(cfgPath, 'wt') as cfg:
+            cfg.writelines(self._lines)
+
+
+def unique(seq):
+    """Return only the unique items in the given list, but preserve order"""
+    # http://stackoverflow.com/a/480227
+    seen = set()
+    seen_add = seen.add
+    return [x for x in seq if not (x in seen or seen_add(x))]
+
 
 # This is copytree from PyPy 2.7 source code.
 #   https://bitbucket.org/pypy/pypy/src/9d88b4875d6e/lib-python/2.7/shutil.py
 # Modifying this so that it doesn't care about an initial directory existing
+
+# Permission is hereby granted, free of charge, to any person obtaining
+# a copy of this software and associated documentation files (the
+# "Software"), to deal in the Software without restriction, including
+# without limitation the rights to use, copy, modify, merge, publish,
+# distribute, sublicense, and/or sell copies of the Software, and to
+# permit persons to whom the Software is furnished to do so, subject to
+# the following conditions:
+
+# The above copyright notice and this permission notice shall be
+# included in all copies or substantial portions of the Software.
+
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+# EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+# MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+# NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
+# LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+# OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+# WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+
 def copytree(src, dst, symlinks=False, ignore=None):
     """Recursively copy a directory tree using copy2().
 
