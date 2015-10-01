@@ -1564,9 +1564,7 @@
             "https://str.cloudn-service.com/buildpacks/php/lucid/php/5.5.27/php-xsl-5.5.27.tar.gz",
             "https://str.cloudn-service.com/buildpacks/php/lucid/php/5.5.27/php-xsl-5.5.27.tar.gz.sha1",
             "https://str.cloudn-service.com/buildpacks/php/lucid/php/5.5.27/php-zlib-5.5.27.tar.gz",
-            "https://str.cloudn-service.com/buildpacks/php/lucid/php/5.5.27/php-zlib-5.5.27.tar.gz.sha1",
-            "https://str.cloudn-service.com/buildpacks/php/lucid/composer/1.0.0-alpha10/composer.phar",
-            "https://str.cloudn-service.com/buildpacks/php/lucid/composer/1.0.0-alpha10/composer.phar.sha1"
+            "https://str.cloudn-service.com/buildpacks/php/lucid/php/5.5.27/php-zlib-5.5.27.tar.gz.sha1"
         ]
     }, 
     "nginx": {
