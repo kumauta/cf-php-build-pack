@@ -28,6 +28,7 @@ class Downloader(object):
             urllib2.install_opener(opener)
 
     def download(self, url, toFile):
+        print '############ To Download [%s] to [%s]' % (url, toFile)
         res = urllib2.urlopen(url)
         with open(toFile, 'w') as f:
             f.write(res.read())
